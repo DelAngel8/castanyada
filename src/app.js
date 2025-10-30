@@ -3,15 +3,16 @@ const express = require("express");
 const path = require("node:path");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
-const methodOverride = require("method-override"); // para "put"
+const methodOverride = require("method-override");
+const db = require("./db"); // la conexión a la base de datos de mysql que esta en src/db.js
 
 
-// Crear la instancia del servidor
+// Creo servidor
 const app = express();
 
-// Configurar algunos parámetros
+// Configuro el servidor
 process.loadEnvFile();
-PORT = process.env.PORT || 6666;
+const PORT = process.env.PORT;
 app.set("views", "./views");
 app.set("view engine", "ejs");
 app.use(express.static(path.join(__dirname, "../public")));
@@ -20,78 +21,122 @@ app.use(express.static(path.join(__dirname, "../public")));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Obtener los datos
-let productes = require("../data/pastisseria.json");
-
-function crearMenu(json, lang) {
-  let tipusProductes = [];
-  let menu = "<ul>";
-
-  if (lang === "cat") {
-  json.forEach((producte) => {
-    if (!tipusProductes.includes(producte.menu_name_cat)) {
-      tipusProductes.push(producte.menu_name_cat);
-    }
-  });
-} else {
-  json.forEach((producte) => {
-    if (!tipusProductes.includes(producte.menu_name_esp)) {
-      tipusProductes.push(producte.menu_name_esp);
+// Función para obtener todos los productos de la base de datos
+function obtenerProductos(respuesta) {
+  db.query('SELECT * FROM sweets', (err, resultados) => {
+    if (err) {
+      respuesta(err, null);
+    } else {
+      respuesta(null, resultados);
     }
   });
 }
 
-  tipusProductes.forEach((tipus) => {
-    menu += `<li><a href="/${tipus.toLocaleLowerCase()}">${tipus}</a></li>`;
+function crearMenu(datos, idioma) {
+  let tiposProductos = [];
+  let menu = "<ul>";
+
+  if (idioma === "cat") {
+  datos.forEach((producto) => {
+    if (!tiposProductos.includes(producto.menu_name_cat)) {
+      tiposProductos.push(producto.menu_name_cat);
+    }
+  });
+} else {
+  datos.forEach((producto) => {
+    if (!tiposProductos.includes(producto.menu_name_esp)) {
+      tiposProductos.push(producto.menu_name_esp);
+    }
+  });
+}
+
+  tiposProductos.forEach((tipo) => {
+    menu += `<li><a href="/${tipo.toLocaleLowerCase()}">${tipo}</a></li>`;
   });
   menu += "</ul>";
   return menu
 }
 
-// Realizar el menú
-const menu = crearMenu(productes)
 
-
-
-// Ruta català
+// Ruta en catalan
 app.get("/", (req, res) => {
-  // Realizar el menú
-  const menu = crearMenu(productes, "cat")
-  res.render("index", { title: "Umm...!",menu, productes, lang: "ESP" });
+  obtenerProductos((error, productos) => {
+    if (error) {
+      console.error('Error obteniendo productos:', error);
+      return;
+    }
+    const menu = crearMenu(productos, "cat");
+    res.render("index", { title: "Umm...!", menu, productes: productos, lang: "ESP" });
+  });
 });
-// Ruta raíz o inicial
+
+// Ruta raíz
 app.get("/esp", (req, res) => {
-  const menu = crearMenu(productes, "esp")
-  res.render("inicio", { title: "Umm...!", menu, productes });
+  obtenerProductos((error, productos) => {
+    if (error) {
+      console.error('Error obteniendo productos:', error);
+      return;
+    }
+    const menu = crearMenu(productos, "esp");
+    res.render("inicio", { title: "Umm...!", menu, productes: productos });
+  });
 });
 
 app.get("/admin", (req, res) => {
-  res.render("admin", { title: "Gestió", menu, productes });
+  obtenerProductos((error, productos) => {
+    if (error) {
+      console.error('Error obteniendo productos:', error);
+      return;
+    }
+    const menu = crearMenu(productos, "cat");
+    res.render("admin", { title: "Gestió", menu, productes: productos });
+  });
 });
-
-
-
 
 
 app.post("/insert", (req, res) => {
-  const body = req.body;
-  body.id = crypto.randomUUID();
-  //console.log(body);
-  productes.push(body);
-  fs.writeFileSync(
-    path.join(__dirname, "../data", "pastisseria.json"),
-    JSON.stringify(productes, null, 2),
-    (err) => {
-      if (err) throw err;
+  const datos = req.body;
+  
+  // Genero ID único con randomUUID
+  const nuevoId = crypto.randomUUID();
+  
+  // Insertar un nuevo producto
+  const consultaInsertar = `INSERT INTO sweets (id, menu_name_cat, name_cat, descripcio_cat, menu_name_esp, name_esp, descripcio_esp, preu, img) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  
+  const valores = [
+    nuevoId,
+    datos.menu_name_cat,
+    datos.name_cat,
+    datos.descripcio_cat,
+    datos.menu_name_esp,
+    datos.name_esp,
+    datos.descripcio_esp,
+    datos.preu,
+    datos.img
+  ];
+  
+  db.query(consultaInsertar, valores, (error, resultados) => {
+    if (error) {
+      console.error('Error insertando producto:', error);
+      return;
     }
-  );
-  // res.render("admin", { title: "administración", menu, travels });
-  res.redirect("/admin")
+    console.log('Producto insertado con ID:', nuevoId);
+    res.redirect("/admin");
+  });
 });
 
-// Ruta para manejar errores 404
+// Ruta para errores 404
 app.use((req, res) => {
-  res.render("404", { title: "Error 404", menu });
+  obtenerProductos((error, productos) => {
+    if (error) {
+      console.error('Error en 404:', error);
+      res.render("404", { title: "Error 404", menu: "<ul></ul>" });
+      return;
+    }
+    const menu = crearMenu(productos, "cat");
+    res.render("404", { title: "Error 404", menu });
+  });
 });
 
 app.listen(PORT, () => {
